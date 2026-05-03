@@ -28,10 +28,11 @@ compose naturally with pipes:
 """
 
 import argparse
+import os
 import string
 import sys
 from collections.abc import Iterable, Iterator
-from typing import Final
+from typing import Final, NoReturn
 
 __all__ = [
     "build_parser",
@@ -116,18 +117,32 @@ def cmd_eval(lines: Lines) -> Iterator[str]:
         yield str(eval(line))
 
 
-def cmd_seq(first: int, increment: int, num: int, pad: str = "") -> Iterator[str]:
-    """Yield `num` elements starting at `first`, stepping by `increment`.
+def cmd_seq(
+    first: int,
+    increment: int,
+    num: int,
+    *,
+    pad: str = "",
+    index: int | None = None,
+) -> Iterator[str]:
+    """Yield elements of an arithmetic sequence starting at `first`.
 
-    `num` is a count, not an upper bound: `cmd_seq(0, 2, 3)` yields 0, 2, 4.
-    `increment` may be any integer; zero yields `num` copies of `first`,
-    negative values descend. A non-positive `num` yields an empty sequence.
+    `num` is the sequence length, a count rather than an upper bound:
+    `cmd_seq(0, 2, 3)` yields 0, 2, 4. `increment` may be any integer; zero
+    yields `num` copies of `first`, negative values descend. A non-positive
+    `num` yields an empty sequence.
 
     `pad` is `""` (no padding, default), `"0"` for zero left-padding, or `" "`
     for space left-padding. When set, all values are padded to the width of
-    the widest value in the sequence so they line up. Zero-padding is
-    sign-aware (matches `str.zfill`): `-1` next to `100` becomes `-001`, not
-    `0-01`.
+    the widest value in the **full** `num`-element sequence so they line up.
+    Zero-padding is sign-aware (matches `str.zfill`): `-1` next to `100`
+    becomes `-001`, not `0-01`.
+
+    `index`, when set, restricts output to the single element at that
+    position in the sequence (`first + index*increment`). The padding width
+    is still computed against the full `num`-element sequence, so multiple
+    parallel invocations rendering different indices line up. `index` must
+    be in `[0, num)`; otherwise `ValueError`.
 
     >>> list(cmd_seq(0, 2, 3))
     ['0', '2', '4']
@@ -151,26 +166,43 @@ def cmd_seq(first: int, increment: int, num: int, pad: str = "") -> Iterator[str
     ['-2', '-1', '00', '01']
     >>> list(cmd_seq(0, 1, 0, pad="0"))
     []
+    >>> list(cmd_seq(0, 1, 5, index=0))
+    ['0']
+    >>> list(cmd_seq(0, 1, 5, index=4))
+    ['4']
+    >>> list(cmd_seq(1, 1, 10, pad="0", index=0))
+    ['01']
+    >>> list(cmd_seq(1, 1, 10, pad="0", index=9))
+    ['10']
+    >>> list(cmd_seq(0, 1, 5, index=5))
+    Traceback (most recent call last):
+        ...
+    ValueError: index 5 out of range for sequence of length 5
     """
+    if index is not None and not 0 <= index < num:
+        raise ValueError(f"index {index} out of range for sequence of length {num}")
     if not pad:
+        if index is not None:
+            yield str(first + index * increment)
+            return
         n = first
         for _ in range(num):
             yield str(n)
             n += increment
         return
-    values = [str(first + i * increment) for i in range(num)]
-    if not values:
+    if num <= 0:
         return
+    values = [str(first + i * increment) for i in range(num)]
     width = max(len(v) for v in values)
-    if pad == "0":
-        # `str.zfill` keeps the sign at the front and pads zeros after it,
-        # matching Python's `f"{-1:03d}" == "-01"`. Plain `rjust(width, "0")`
-        # would emit `"0-1"`, which no one wants.
-        for v in values:
-            yield v.zfill(width)
+    # `str.zfill` keeps the sign at the front and pads zeros after it,
+    # matching Python's `f"{-1:03d}" == "-01"`. Plain `rjust(width, "0")`
+    # would emit `"0-1"`, which no one wants.
+    pad_one = (lambda v: v.zfill(width)) if pad == "0" else (lambda v: v.rjust(width, pad))
+    if index is not None:
+        yield pad_one(values[index])
     else:
         for v in values:
-            yield v.rjust(width, pad)
+            yield pad_one(v)
 
 
 def _seq_run(args: argparse.Namespace) -> Iterator[str]:
@@ -181,10 +213,38 @@ def _seq_run(args: argparse.Namespace) -> Iterator[str]:
     while `cmd_seq` itself keeps yielding individual values for Python use
     and doctests. An empty sequence yields nothing here, so empty output
     stays truly empty rather than emitting a stray newline.
+
+    If `NUM` was omitted on the CLI, this reads `MICRO_CURSOR_COUNT` and
+    `MICRO_CURSOR_INDEX` from the environment: one ptm invocation per
+    cursor, each invocation gets a different `INDEX` in `[0, COUNT)`, and
+    we emit just that cursor's element of the `COUNT`-length sequence.
+    Padding width is computed against the full sequence so parallel
+    invocations align.
     """
-    line = " ".join(cmd_seq(args.first, args.increment, args.num, args.pad or ""))
+    num = args.num
+    index: int | None = None
+    if num is None:
+        try:
+            num = int(os.environ["MICRO_CURSOR_COUNT"])
+            index = int(os.environ["MICRO_CURSOR_INDEX"])
+        except KeyError as e:
+            _seq_die(f"NUM omitted and ${e.args[0]} is not set")
+        except ValueError as e:
+            _seq_die(f"env var must be an integer ({e})")
+    try:
+        line = " ".join(cmd_seq(args.first, args.increment, num, pad=args.pad or "", index=index))
+    except ValueError as e:
+        _seq_die(str(e))
     if line:
         yield line
+
+
+def _seq_die(msg: str) -> NoReturn:
+    """Write a clean error to stderr and exit. `sys.exit(msg)` alone only
+    writes the message when SystemExit propagates to the interpreter, which
+    isn't what test harnesses (or `main()` callers) see."""
+    print(f"ptm seq: {msg}", file=sys.stderr)
+    sys.exit(2)
 
 
 def _to_base(n: int, base: int) -> str:
@@ -323,8 +383,17 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser(
         "seq",
         help=(
-            "Print NUM elements starting at FIRST, stepping by INCREMENT "
-            "(single space-separated line)"
+            "Print NUM elements starting at FIRST, stepping by INCREMENT, "
+            "or one element per multi-cursor invocation if NUM is omitted"
+        ),
+        description=(
+            "Print NUM elements starting at FIRST, stepping by INCREMENT, "
+            "as a single space-separated line. If NUM is omitted, the env "
+            "vars MICRO_CURSOR_COUNT and MICRO_CURSOR_INDEX (set by the "
+            "editor when the same command runs once per cursor) select the "
+            "sequence length and which single element this invocation "
+            "emits, distributing the sequence across cursors. An explicit "
+            "NUM takes precedence over the env vars."
         ),
     )
     pad_group = sp.add_mutually_exclusive_group()
@@ -344,7 +413,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp.add_argument("first", type=int)
     sp.add_argument("increment", type=int)
-    sp.add_argument("num", type=int)
+    sp.add_argument("num", type=int, nargs="?", default=None)
     sp.set_defaults(run=_seq_run, pad=None)
 
     for src_name, src_base in _BASES.items():

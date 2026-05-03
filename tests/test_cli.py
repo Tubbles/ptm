@@ -120,6 +120,98 @@ def test_seq_zero_pad_empty_sequence_emits_nothing(capsys: pytest.CaptureFixture
     assert capsys.readouterr().out == ""
 
 
+def test_seq_num_omitted_reads_cursor_env(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One invocation per cursor. Each gets a different MICRO_CURSOR_INDEX
+    and emits exactly that cursor's element of the full sequence."""
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "5")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "0")
+    ptm.main(["seq", "1", "1"])
+    assert capsys.readouterr().out == "1\n"
+
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "4")
+    ptm.main(["seq", "1", "1"])
+    assert capsys.readouterr().out == "5\n"
+
+
+def test_seq_num_omitted_with_zero_pad_uses_full_sequence_width(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # COUNT=10 means the widest element ("10") is two chars, so the first
+    # cursor's "1" must render as "01" to line up with siblings rendering
+    # "02", ..., "10". This is the load-bearing reason cmd_seq computes
+    # width against the full sequence rather than the indexed element only.
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "10")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "0")
+    ptm.main(["seq", "-z", "1", "1"])
+    assert capsys.readouterr().out == "01\n"
+
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "9")
+    ptm.main(["seq", "-z", "1", "1"])
+    assert capsys.readouterr().out == "10\n"
+
+
+def test_seq_num_omitted_with_space_pad_uses_full_sequence_width(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "10")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "0")
+    ptm.main(["seq", "-p", "1", "1"])
+    assert capsys.readouterr().out == " 1\n"
+
+
+def test_seq_explicit_num_takes_precedence_over_env(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "10")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "5")
+    ptm.main(["seq", "0", "1", "3"])
+    assert capsys.readouterr().out == "0 1 2\n"
+
+
+def test_seq_num_omitted_missing_env_errors(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("MICRO_CURSOR_COUNT", raising=False)
+    monkeypatch.delenv("MICRO_CURSOR_INDEX", raising=False)
+    with pytest.raises(SystemExit):
+        ptm.main(["seq", "1", "1"])
+    assert "MICRO_CURSOR_COUNT" in capsys.readouterr().err
+
+
+def test_seq_num_omitted_partial_env_errors(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "5")
+    monkeypatch.delenv("MICRO_CURSOR_INDEX", raising=False)
+    with pytest.raises(SystemExit):
+        ptm.main(["seq", "1", "1"])
+    assert "MICRO_CURSOR_INDEX" in capsys.readouterr().err
+
+
+def test_seq_num_omitted_non_integer_env_errors(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "abc")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "0")
+    with pytest.raises(SystemExit):
+        ptm.main(["seq", "1", "1"])
+    assert "integer" in capsys.readouterr().err
+
+
+def test_seq_num_omitted_index_out_of_range_errors(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Editor invariant violation: INDEX must be in [0, COUNT). Surface it
+    # as a clean error rather than letting a stray ValueError leak out.
+    monkeypatch.setenv("MICRO_CURSOR_COUNT", "3")
+    monkeypatch.setenv("MICRO_CURSOR_INDEX", "5")
+    with pytest.raises(SystemExit):
+        ptm.main(["seq", "1", "1"])
+    assert "out of range" in capsys.readouterr().err
+
+
 def test_dec2hex(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     _set_stdin(monkeypatch, "255\n4096\n0\n")
     ptm.main(["dec2hex"])
