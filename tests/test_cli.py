@@ -87,6 +87,39 @@ def test_seq_negative_count_is_empty(capsys: pytest.CaptureFixture[str]) -> None
     assert capsys.readouterr().out == ""
 
 
+def test_seq_zero_pad(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["seq", "-z", "8", "1", "3"])
+    assert capsys.readouterr().out == "08 09 10\n"
+
+
+def test_seq_space_pad(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["seq", "-p", "8", "1", "3"])
+    assert capsys.readouterr().out == " 8  9 10\n"
+
+
+def test_seq_zero_pad_with_negatives_is_sign_aware(capsys: pytest.CaptureFixture[str]) -> None:
+    # `-1` is two chars; zero-padded `0` and `1` must become `00`/`01`, not
+    # something silly like `0-1`. Matches `str.zfill` / `f"{n:03d}"`.
+    ptm.main(["seq", "-z", "-1", "1", "3"])
+    assert capsys.readouterr().out == "-1 00 01\n"
+
+
+def test_seq_space_pad_with_negatives(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["seq", "-p", "-1", "1", "3"])
+    assert capsys.readouterr().out == "-1  0  1\n"
+
+
+def test_seq_pad_flags_are_mutually_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        ptm.main(["seq", "-z", "-p", "1", "1", "3"])
+    assert "not allowed with" in capsys.readouterr().err
+
+
+def test_seq_zero_pad_empty_sequence_emits_nothing(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["seq", "-z", "0", "1", "0"])
+    assert capsys.readouterr().out == ""
+
+
 def test_dec2hex(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     _set_stdin(monkeypatch, "255\n4096\n0\n")
     ptm.main(["dec2hex"])

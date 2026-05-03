@@ -116,12 +116,18 @@ def cmd_eval(lines: Lines) -> Iterator[str]:
         yield str(eval(line))
 
 
-def cmd_seq(first: int, increment: int, num: int) -> Iterator[str]:
+def cmd_seq(first: int, increment: int, num: int, pad: str = "") -> Iterator[str]:
     """Yield `num` elements starting at `first`, stepping by `increment`.
 
     `num` is a count, not an upper bound: `cmd_seq(0, 2, 3)` yields 0, 2, 4.
     `increment` may be any integer; zero yields `num` copies of `first`,
     negative values descend. A non-positive `num` yields an empty sequence.
+
+    `pad` is `""` (no padding, default), `"0"` for zero left-padding, or `" "`
+    for space left-padding. When set, all values are padded to the width of
+    the widest value in the sequence so they line up. Zero-padding is
+    sign-aware (matches `str.zfill`): `-1` next to `100` becomes `-001`, not
+    `0-01`.
 
     >>> list(cmd_seq(0, 2, 3))
     ['0', '2', '4']
@@ -133,11 +139,38 @@ def cmd_seq(first: int, increment: int, num: int) -> Iterator[str]:
     ['7', '7', '7']
     >>> list(cmd_seq(0, 1, 0))
     []
+    >>> list(cmd_seq(8, 1, 3, pad="0"))
+    ['08', '09', '10']
+    >>> list(cmd_seq(8, 1, 3, pad=" "))
+    [' 8', ' 9', '10']
+    >>> list(cmd_seq(-1, 1, 3, pad="0"))
+    ['-1', '00', '01']
+    >>> list(cmd_seq(-1, 1, 3, pad=" "))
+    ['-1', ' 0', ' 1']
+    >>> list(cmd_seq(-2, 1, 4, pad="0"))
+    ['-2', '-1', '00', '01']
+    >>> list(cmd_seq(0, 1, 0, pad="0"))
+    []
     """
-    n = first
-    for _ in range(num):
-        yield str(n)
-        n += increment
+    if not pad:
+        n = first
+        for _ in range(num):
+            yield str(n)
+            n += increment
+        return
+    values = [str(first + i * increment) for i in range(num)]
+    if not values:
+        return
+    width = max(len(v) for v in values)
+    if pad == "0":
+        # `str.zfill` keeps the sign at the front and pads zeros after it,
+        # matching Python's `f"{-1:03d}" == "-01"`. Plain `rjust(width, "0")`
+        # would emit `"0-1"`, which no one wants.
+        for v in values:
+            yield v.zfill(width)
+    else:
+        for v in values:
+            yield v.rjust(width, pad)
 
 
 def _seq_run(args: argparse.Namespace) -> Iterator[str]:
@@ -149,7 +182,7 @@ def _seq_run(args: argparse.Namespace) -> Iterator[str]:
     and doctests. An empty sequence yields nothing here, so empty output
     stays truly empty rather than emitting a stray newline.
     """
-    line = " ".join(cmd_seq(args.first, args.increment, args.num))
+    line = " ".join(cmd_seq(args.first, args.increment, args.num, args.pad or ""))
     if line:
         yield line
 
@@ -294,10 +327,25 @@ def build_parser() -> argparse.ArgumentParser:
             "(single space-separated line)"
         ),
     )
+    pad_group = sp.add_mutually_exclusive_group()
+    pad_group.add_argument(
+        "-z",
+        dest="pad",
+        action="store_const",
+        const="0",
+        help="Left-pad each value with zeros so all values line up (sign-aware)",
+    )
+    pad_group.add_argument(
+        "-p",
+        dest="pad",
+        action="store_const",
+        const=" ",
+        help="Left-pad each value with spaces so all values line up",
+    )
     sp.add_argument("first", type=int)
     sp.add_argument("increment", type=int)
     sp.add_argument("num", type=int)
-    sp.set_defaults(run=_seq_run)
+    sp.set_defaults(run=_seq_run, pad=None)
 
     for src_name, src_base in _BASES.items():
         for dst_name, dst_base in _BASES.items():
