@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-PTM ("Python Text Manipulator") is a single-file CLI: a Unix-style line filter with subcommands. Each subcommand reads lines from stdin (or generates them) and writes one result line to stdout. The whole project deliberately stays in `ptm.py` plus tests; a package layout would be over-engineering.
+PTM ("Python Text Manipulator") is a single-file CLI: a Unix-style line filter with subcommands. Each subcommand reads lines from positional `VAL` args or stdin (or generates them) and writes one result line to stdout. The whole project deliberately stays in `ptm.py` plus tests; a package layout would be over-engineering.
 
 Python `>=3.13` is required. The codebase uses PEP 695 `type` aliases and modern stdlib generics, so don't try to back-port to older Pythons without removing those features.
 
@@ -28,17 +28,19 @@ The dispatch shape is the only non-obvious thing in the file:
 
 - Each `cmd_*` function is **pure**: it takes its primitive arguments and (where relevant) an `Iterable[str]` of input lines, and returns an `Iterator[str]` of output lines. No `argparse.Namespace` coupling, no `sys.stdin`/`sys.stdout` reads, no `print`. This is what makes them trivially doctestable with literal lists.
 - `build_parser()` wires each subcommand to a `run` lambda stored via `set_defaults(run=...)`. The lambda is the only place that touches `sys.stdin` and unpacks the `Namespace` into the cmd function's real arguments. Argparse stays at the edge.
+- Subcommands that consume input use `_lines_from(args.values)` in their dispatch lambda: this returns the positional `VAL` list when the user passed one, and `sys.stdin` otherwise. The cmd function itself just sees an `Iterable[str]`; it doesn't know or care which source filled it.
 - `main()` calls `args.run(args)` and prints each yielded line. It is the only place that does I/O.
 
 When adding a new subcommand:
 
 1. Write the cmd function as a pure generator with a doctest.
 2. Add a parser branch in `build_parser()` and a `run=lambda ...` that adapts the `Namespace` and (if needed) `sys.stdin` to the function's signature.
-3. Add an end-to-end test in `tests/test_cli.py` using `capsys` and the `_set_stdin` helper.
+3. If the subcommand consumes lines, declare `sp.add_argument("values", nargs="*", metavar="VAL")` and route input through `_lines_from(a.values)` so callers can supply values on the command line *or* via stdin. Mention both styles in the subparser's `description=`, matching the wording used by `inc`/`dec`/`eval`. Without this the user gets the same hang/empty-help trap that motivated dual input in the first place: `ptm <new-cmd>` with no pipe just blocks on `sys.stdin` and `--help` is silent about it.
+4. Add an end-to-end test in `tests/test_cli.py` using `capsys` and the `_set_stdin` helper. For input-consuming subcommands add a positional-args test too (no `_set_stdin` call) so a regression that ignores positional VALs hangs the test instead of silently passing.
 
 If a cmd function would need `sys.stdin` directly, that is the signal you broke the purity invariant. Pass lines in as a parameter instead.
 
-`_nonempty()` is the shared input-normalization helper: strip whitespace and drop empty lines. Use it in any cmd that reads stdin so blank-line behavior stays consistent across subcommands.
+`_nonempty()` is the shared input-normalization helper: strip whitespace and drop empty lines. Use it in any cmd that reads input so blank-line behavior stays consistent across subcommands (and across the VAL/stdin split — a `ptm inc 1 '  5  '` invocation gets the same normalization as a piped `  5  ` line).
 
 ## Conventions specific to this repo
 

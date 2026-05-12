@@ -37,6 +37,32 @@ def test_inc_skips_blank_lines(
     assert capsys.readouterr().out == "11\n12\n"
 
 
+def test_inc_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    # Values may be passed as positional args instead of stdin. No _set_stdin:
+    # if positional args weren't honored, this test would hang on the real
+    # sys.stdin (test harness would time out), so passing == correct dispatch.
+    ptm.main(["inc", "1", "5", "6", "7"])
+    assert capsys.readouterr().out == "6\n7\n8\n"
+
+
+def test_inc_positional_negative_value(capsys: pytest.CaptureFixture[str]) -> None:
+    # A leading `-5` must be treated as a positional value, not an option.
+    # The inc subparser defines no negative-number-looking flags, so argparse
+    # leaves the negative-number-optional regex unset and `-5` parses cleanly.
+    ptm.main(["inc", "1", "-5", "10"])
+    assert capsys.readouterr().out == "-4\n11\n"
+
+
+def test_inc_positional_overrides_stdin(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codifies the dispatch contract: when positional values are given,
+    # stdin is ignored entirely (not concatenated, not appended).
+    _set_stdin(monkeypatch, "100\n200\n")
+    ptm.main(["inc", "1", "5"])
+    assert capsys.readouterr().out == "6\n"
+
+
 def test_dec(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     _set_stdin(monkeypatch, "10\n5\n1\n")
     ptm.main(["dec", "1"])
@@ -49,10 +75,20 @@ def test_dec_negative(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.Mo
     assert capsys.readouterr().out == "15\n5\n"
 
 
+def test_dec_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["dec", "1", "10", "5"])
+    assert capsys.readouterr().out == "9\n4\n"
+
+
 def test_eval(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     _set_stdin(monkeypatch, "1+2\n2**10\n")
     ptm.main(["eval"])
     assert capsys.readouterr().out == "3\n1024\n"
+
+
+def test_eval_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["eval", "1+2", "7*8", "2**10"])
+    assert capsys.readouterr().out == "3\n56\n1024\n"
 
 
 def test_seq_ascending(capsys: pytest.CaptureFixture[str]) -> None:
@@ -218,6 +254,11 @@ def test_dec2hex(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyP
     assert capsys.readouterr().out == "ff\n1000\n0\n"
 
 
+def test_dec2hex_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["dec2hex", "255", "4096"])
+    assert capsys.readouterr().out == "ff\n1000\n"
+
+
 def test_bin2hex(capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch) -> None:
     _set_stdin(monkeypatch, "1010\n11111111\n")
     ptm.main(["bin2hex"])
@@ -260,6 +301,18 @@ def test_baseconv_bin_to_hex(
     _set_stdin(monkeypatch, "1010\n11111111\n")
     ptm.main(["baseconv", "2", "16"])
     assert capsys.readouterr().out == "a\nff\n"
+
+
+def test_baseconv_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    ptm.main(["baseconv", "2", "16", "1010", "11111111"])
+    assert capsys.readouterr().out == "a\nff\n"
+
+
+def test_baseconv_base64_alpha_positional(capsys: pytest.CaptureFixture[str]) -> None:
+    # Alphabetic positional values must not be misread as options. "BA" in
+    # RFC 4648 base 64 is one*64 + zero = 64.
+    ptm.main(["baseconv", "64", "10", "BA"])
+    assert capsys.readouterr().out == "64\n"
 
 
 def test_baseconv_arbitrary_base(

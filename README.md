@@ -1,6 +1,6 @@
 # Python Text Manipulator
 
-A tiny Unix-style filter with subcommands. Each subcommand reads lines from stdin (or generates them) and writes one result line to stdout, so commands compose naturally with pipes.
+A tiny Unix-style filter with subcommands. Each subcommand reads lines from positional `VAL` args or stdin (or generates them) and writes one result line to stdout, so commands work both as one-off CLI calls and as components in a pipeline.
 
 ## Usage
 
@@ -27,18 +27,41 @@ $ printf '1+2\n7*8\n2**10\n' | ptm eval
 1024
 ```
 
+Each subcommand that reads stdin also accepts values as positional `VAL` args, which is convenient for one-offs:
+
+```sh
+$ ptm inc 1 5 6 7
+6
+7
+8
+
+$ ptm dec2hex 255 4096
+ff
+1000
+
+$ ptm baseconv 2 16 1010 11111111
+a
+ff
+
+$ ptm eval '1+2' '7*8'
+3
+56
+```
+
+With no `VAL` args, input is read from stdin as before; with neither pipe nor `VAL` args, the command waits on stdin (each subcommand's `--help` says so explicitly).
+
 `ptm eval` evaluates each line as a Python expression with full access to builtins. Treat it as a calculator over trusted input.
 
 ## Subcommands
 
-| Command                | Reads stdin? | Description                                                      |
-| ---------------------- | :----------: | ---------------------------------------------------------------- |
-| `inc N`                | yes          | Add `N` (may be negative) to each integer line.                  |
-| `dec N`                | yes          | Subtract `N` (may be negative) from each integer line.           |
-| `eval`                 | yes          | Evaluate each line as a Python expression.                       |
-| `seq FIRST INC NUM`    | no           | Print `NUM` elements starting at `FIRST`, stepping by `INC` (any integer, including 0 or negative), as one space-separated line. |
-| `bin2oct`, `bin2dec`, `bin2hex`, `oct2bin`, `oct2dec`, `oct2hex`, `dec2bin`, `dec2oct`, `dec2hex`, `hex2bin`, `hex2oct`, `hex2dec` | yes | Pairwise base-conversion shortcuts among `bin` (base 2), `oct` (8), `dec` (10), `hex` (16). |
-| `baseconv FROM TO`     | yes          | Generic version for arbitrary bases (each in `2..64`). E.g. `baseconv 2 16` is `bin2hex`. Bases 2..36 use the conventional `0..9a..z` alphabet (case-insensitive). Bases 37..64 switch to the RFC 4648 base64 alphabet `A..Za..z0..9+/` (case-sensitive), so `'A'` is digit 0 and `'0'` is digit 52. The alphabets are deliberately discontinuous at the boundary so hex et al. keep their familiar form. |
+| Command                | Input | Description                                                      |
+| ---------------------- | :---: | ---------------------------------------------------------------- |
+| `inc N [VAL...]`       | VAL or stdin | Add `N` (may be negative) to each integer line.                  |
+| `dec N [VAL...]`       | VAL or stdin | Subtract `N` (may be negative) from each integer line.           |
+| `eval [EXPR...]`       | EXPR or stdin | Evaluate each line as a Python expression.                       |
+| `seq FIRST INC NUM`    | none  | Print `NUM` elements starting at `FIRST`, stepping by `INC` (any integer, including 0 or negative), as one space-separated line. |
+| `bin2oct`, `bin2dec`, `bin2hex`, `oct2bin`, `oct2dec`, `oct2hex`, `dec2bin`, `dec2oct`, `dec2hex`, `hex2bin`, `hex2oct`, `hex2dec` (each `[VAL...]`) | VAL or stdin | Pairwise base-conversion shortcuts among `bin` (base 2), `oct` (8), `dec` (10), `hex` (16). |
+| `baseconv FROM TO [VAL...]` | VAL or stdin | Generic version for arbitrary bases (each in `2..64`). E.g. `baseconv 2 16` is `bin2hex`. Bases 2..36 use the conventional `0..9a..z` alphabet (case-insensitive). Bases 37..64 switch to the RFC 4648 base64 alphabet `A..Za..z0..9+/` (case-sensitive), so `'A'` is digit 0 and `'0'` is digit 52. The alphabets are deliberately discontinuous at the boundary so hex et al. keep their familiar form. |
 
 `baseconv` is positional numeric conversion only. Even at base 64 it is *not* interoperable with `base64(1)` / RFC 4648 binary-to-text encoding: it shares the alphabet (above 36), not the byte-stream framing or `=` padding.
 

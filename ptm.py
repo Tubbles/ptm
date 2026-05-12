@@ -2,13 +2,19 @@
 """ptm: Python Text Manipulator.
 
 A small Unix-style filter with subcommands. Each subcommand reads lines from
-stdin (or generates them) and writes one result line to stdout, so commands
-compose naturally with pipes:
+positional VAL args or stdin (or generates them) and writes one result line
+to stdout, so commands compose naturally with pipes or work as one-off CLI
+calls:
 
     $ printf '1\\n2\\n3\\n' | ptm inc 10
     11
     12
     13
+
+    $ ptm inc 1 5 6 7
+    6
+    7
+    8
 
     $ ptm seq 0 2 3
     0 2 4
@@ -75,6 +81,15 @@ def _nonempty(lines: Lines) -> Iterator[str]:
         s = line.strip()
         if s:
             yield s
+
+
+def _lines_from(values: list[str] | None) -> Lines:
+    """Return positional VAL args if any were given, otherwise sys.stdin.
+
+    Truthy check (not `is None`) so that an empty argparse list (`nargs="*"`
+    matched zero positional args) also falls through to the stdin path.
+    """
+    return values if values else sys.stdin
 
 
 def cmd_inc(amount: int, lines: Lines) -> Iterator[str]:
@@ -369,16 +384,48 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="command", required=True)
 
-    sp = sub.add_parser("inc", help="Add N to each integer on stdin")
+    sp = sub.add_parser(
+        "inc",
+        help="Add N to each integer on stdin",
+        description=(
+            "Add N to each integer. Values may be passed as VAL positional "
+            "args (e.g. `ptm inc 1 5 6 7`) or piped on stdin (e.g. "
+            "`seq 5 7 | ptm inc 1`). With no VAL args and no pipe, the "
+            "command waits on stdin."
+        ),
+    )
     sp.add_argument("amount", type=int)
-    sp.set_defaults(run=lambda a: cmd_inc(a.amount, sys.stdin))
+    sp.add_argument("values", nargs="*", metavar="VAL")
+    sp.set_defaults(run=lambda a: cmd_inc(a.amount, _lines_from(a.values)))
 
-    sp = sub.add_parser("dec", help="Subtract N from each integer on stdin")
+    sp = sub.add_parser(
+        "dec",
+        help="Subtract N from each integer on stdin",
+        description=(
+            "Subtract N from each integer. Values may be passed as VAL "
+            "positional args (e.g. `ptm dec 1 10 5`) or piped on stdin "
+            "(e.g. `seq 5 7 | ptm dec 1`). With no VAL args and no pipe, "
+            "the command waits on stdin."
+        ),
+    )
     sp.add_argument("amount", type=int)
-    sp.set_defaults(run=lambda a: cmd_dec(a.amount, sys.stdin))
+    sp.add_argument("values", nargs="*", metavar="VAL")
+    sp.set_defaults(run=lambda a: cmd_dec(a.amount, _lines_from(a.values)))
 
-    sp = sub.add_parser("eval", help="Evaluate each line on stdin as a Python expression")
-    sp.set_defaults(run=lambda _: cmd_eval(sys.stdin))
+    sp = sub.add_parser(
+        "eval",
+        help="Evaluate each line on stdin as a Python expression",
+        description=(
+            "Evaluate each input line as a Python expression with full "
+            "builtins access (treat as a calculator over trusted input). "
+            "Expressions may be passed as EXPR positional args (e.g. "
+            "`ptm eval '1+2' '7*8'`, quoted to escape shell metachars) "
+            "or piped on stdin (e.g. `printf '1+2\\n7*8\\n' | ptm eval`). "
+            "With no EXPR args and no pipe, the command waits on stdin."
+        ),
+    )
+    sp.add_argument("expressions", nargs="*", metavar="EXPR")
+    sp.set_defaults(run=lambda a: cmd_eval(_lines_from(a.expressions)))
 
     sp = sub.add_parser(
         "seq",
@@ -423,18 +470,35 @@ def build_parser() -> argparse.ArgumentParser:
             sp = sub.add_parser(
                 f"{src_name}2{dst_name}",
                 help=f"Convert each {src_name} integer on stdin to {dst_name}",
+                description=(
+                    f"Convert each {src_name} integer to {dst_name}. Values may "
+                    f"be passed as VAL positional args (e.g. "
+                    f"`ptm {src_name}2{dst_name} ...`) or piped on stdin. "
+                    f"With no VAL args and no pipe, the command waits on stdin."
+                ),
             )
+            sp.add_argument("values", nargs="*", metavar="VAL")
             # Default-arg capture binds the loop values; without `s=` and `d=`
             # every lambda would close over the final iteration's bases.
-            sp.set_defaults(run=lambda _, s=src_base, d=dst_base: cmd_baseconv(s, d, sys.stdin))
+            sp.set_defaults(
+                run=lambda a, s=src_base, d=dst_base: cmd_baseconv(s, d, _lines_from(a.values))
+            )
 
     sp = sub.add_parser(
         "baseconv",
-        help="Convert each integer on stdin from base FROM to base TO (each in 2..36)",
+        help="Convert each integer on stdin from base FROM to base TO (each in 2..64)",
+        description=(
+            "Convert each integer from base FROM to base TO (each in 2..64). "
+            "Values may be passed as VAL positional args (e.g. "
+            "`ptm baseconv 2 16 1010 11111111`) or piped on stdin (e.g. "
+            "`printf '1010\\n11111111\\n' | ptm baseconv 2 16`). With no VAL "
+            "args and no pipe, the command waits on stdin."
+        ),
     )
     sp.add_argument("from_base", metavar="FROM", type=_base_int)
     sp.add_argument("to_base", metavar="TO", type=_base_int)
-    sp.set_defaults(run=lambda a: cmd_baseconv(a.from_base, a.to_base, sys.stdin))
+    sp.add_argument("values", nargs="*", metavar="VAL")
+    sp.set_defaults(run=lambda a: cmd_baseconv(a.from_base, a.to_base, _lines_from(a.values)))
 
     return p
 
