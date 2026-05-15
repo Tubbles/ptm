@@ -382,10 +382,34 @@ def cmd_baseconv(from_base: int, to_base: int, lines: Lines) -> Iterator[str]:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ptm", description="Python Text Manipulator")
     p.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+
+    # `common` carries options shared by every subcommand. `parents=[common]`
+    # on each `sub.add_parser(...)` inherits the flag without redeclaring it,
+    # and the behavior lives in `main()` (not the per-subcommand `run`
+    # lambdas) so the cmd functions stay pure.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "-n",
+        "--newline",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Force the trailing newline on (-n / --newline) or off "
+            "(--no-newline) on the *final* output line, overriding the "
+            "default auto-detection. Default: emit when stdout is a TTY "
+            "(interactive shell), suppress otherwise (editor textfilter "
+            "selecting partial lines, shell pipe, redirect to file). "
+            "Inter-line newlines on multi-line output are always emitted. "
+            "Note: unlike echo(1)/printf(1), -n here means *add* a newline, "
+            "not suppress one."
+        ),
+    )
+
     sub = p.add_subparsers(dest="command", required=True)
 
     sp = sub.add_parser(
         "inc",
+        parents=[common],
         help="Add N to each integer on stdin",
         description=(
             "Add N to each integer. Values may be passed as VAL positional "
@@ -400,6 +424,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "dec",
+        parents=[common],
         help="Subtract N from each integer on stdin",
         description=(
             "Subtract N from each integer. Values may be passed as VAL "
@@ -414,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "eval",
+        parents=[common],
         help="Evaluate each line on stdin as a Python expression",
         description=(
             "Evaluate each input line as a Python expression with full "
@@ -429,6 +455,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "seq",
+        parents=[common],
         help=(
             "Print NUM elements starting at FIRST, stepping by INCREMENT, "
             "or one element per multi-cursor invocation if NUM is omitted"
@@ -469,6 +496,7 @@ def build_parser() -> argparse.ArgumentParser:
                 continue
             sp = sub.add_parser(
                 f"{src_name}2{dst_name}",
+                parents=[common],
                 help=f"Convert each {src_name} integer on stdin to {dst_name}",
                 description=(
                     f"Convert each {src_name} integer to {dst_name}. Values may "
@@ -486,6 +514,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "baseconv",
+        parents=[common],
         help="Convert each integer on stdin from base FROM to base TO (each in 2..64)",
         description=(
             "Convert each integer from base FROM to base TO (each in 2..64). "
@@ -505,8 +534,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
+    # Inter-line newlines are always emitted (they're what makes the output
+    # multi-line); only the *trailing* newline after the last line is
+    # conditional. Default heuristic: emit when stdout is a TTY (interactive
+    # shell wants the prompt on a fresh line), suppress otherwise (editor
+    # textfilter selections often don't include a trailing newline, and a
+    # stray `\n` would land in the buffer; shell pipes and redirects to
+    # files usually don't care either way). `-n` / `--newline` /
+    # `--no-newline` override. Buffer one line ahead so we can spot the
+    # last yielded value without materializing the full iterator.
+    emit_trailing = args.newline if args.newline is not None else sys.stdout.isatty()
+    prev: str | None = None
     for line in args.run(args):
-        print(line)
+        if prev is not None:
+            print(prev)
+        prev = line
+    if prev is not None:
+        print(prev, end="\n" if emit_trailing else "")
 
 
 if __name__ == "__main__":
